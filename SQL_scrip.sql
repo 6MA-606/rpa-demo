@@ -1,0 +1,41 @@
+select * from BOTFTP_TEST;
+
+-- Create Index
+CREATE INDEX idx_botftp_test_name ON BOTFTP_TEST(NAME);
+
+-- Select Index
+SELECT INDEX_NAME, TABLE_NAME, UNIQUENESS, STATUS
+FROM USER_INDEXES
+WHERE TABLE_NAME = 'BOTFTP_TEST';
+
+-- Create function
+CREATE OR REPLACE FUNCTION CHECK_NAME_EXISTS(p_name VARCHAR2) RETURN NUMBER IS
+    v_count NUMBER := 0;
+BEGIN
+    -- ตรวจสอบว่ามี NAME นี้อยู่หรือไม่
+    SELECT COUNT(*) INTO v_count FROM BOTFTP_TEST WHERE NAME = p_name;
+
+    -- ถ้ามีให้ return 1, ถ้าไม่มีให้ return 0
+    IF v_count > 0 THEN
+        RETURN 1;
+    ELSE
+        RETURN 0;
+    END IF;
+END CHECK_NAME_EXISTS;
+/
+
+
+-- Check function
+SELECT OBJECT_NAME, OBJECT_TYPE, OWNER
+FROM ALL_OBJECTS
+WHERE OBJECT_NAME = 'CHECK_NAME_EXISTS';
+
+-- call function
+SELECT CHECK_NAME_EXISTS('Bot1') AS result FROM dual;
+
+-- check Status Function
+SELECT OBJECT_NAME, STATUS FROM USER_OBJECTS WHERE OBJECT_TYPE = 'FUNCTION' AND OBJECT_NAME = 'CHECK_NAME_EXISTS';
+
+-- Dorp Function
+DROP FUNCTION CHECK_NAME_EXISTS;
+
