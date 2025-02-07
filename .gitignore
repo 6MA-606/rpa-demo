@@ -15,3 +15,10 @@ temp/
 testrun/*
 .~lock*
 *.pkl
+
+*.old
+*.bak
+.env
+*.log
+
+__pycache__
