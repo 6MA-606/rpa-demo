@@ -1,11 +1,12 @@
 import json
 import paramiko
 from robocorp.tasks import task
+from sftp.conn import get_sftp_client
+from rabbitmq.conn import set_rabbitmq_queue, publish_message
 # from sftp.conn import get_sftp_client
 
 # connect Oracle
 from db.conn import get_connection 
-
 
 paramiko.util.log_to_file("paramiko.log")
 
@@ -49,12 +50,18 @@ def get_DocumentByname(docName):
 
     except Exception as e:
         print(f"❌ Query failed: {e}")
-
     finally:
         cursor.close()
         conn.close
         print("✅ Connection closed!")
         print(f"Result Search = 'Bot1' : {result}")   
+        
+@task
+def enqueue_file(file_name):
+    """Enqueue file to RabbitMQ"""
+    set_rabbitmq_queue("file_queue")
+    publish_message("file_queue", json.dumps({"file_name": file_name}))
+
 
 if __name__ == "__main__":
     listDocs = get_all_Documents()
