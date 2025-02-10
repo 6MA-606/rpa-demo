@@ -22,3 +22,4 @@ testrun/*
 *.log
 
 __pycache__
+file_copy_test/
