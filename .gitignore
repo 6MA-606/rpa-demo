@@ -20,5 +20,6 @@ testrun/*
 *.bak
 .env
 *.log
+documents
 
 __pycache__

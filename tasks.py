@@ -7,58 +7,71 @@ from sftp.conn import get_sftp_client
 from rabbitmq.conn import publish_message_to_exchange
 from db.conn import get_db_connection 
 from datetime import datetime
+from libs.logManagement import write_log
+from libs.status import Status
+# import sys
+# import io
+
+# sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 paramiko.util.log_to_file("paramiko.log")
 
 sftp_remote_dir = env["SFTP_REMOTE_DIR"]
 sftp_local_dir = env["SFTP_LOCAL_DIR"]
 
-def pull_file(file_name, db_conn):
+def pull_file(file_name):
     """Pull file from SFTP"""
 
     global sftp_remote_dir
     global sftp_local_dir
 
-    sftp_client = get_sftp_client(sftp_remote_dir)
-    sftp_client.get(file_name, f"{sftp_local_dir}/{file_name}")
-
-    cursor = db_conn.cursor()
-
     try:
-        # TODO: Implement SEQUENCE in Oracle DB
-        result = cursor.execute("SELECT COUNT(*) FROM PROCESS_HISTORY")
-        seq_process = result.fetchone()[0] + 1
-        cursor.execute("INSERT INTO PROCESS_HISTORY (SEQ_PROCESS, DOC_NAME, PROCESS_STATUS, CREATED_BY, CREATED_DATE) VALUES (:seq_process, :doc_name, '0', 'Schedule RPA', CURRENT_TIMESTAMP)", {
-            "seq_process": seq_process,
-            "doc_name": file_name,
-        })
-        db_conn.commit()
+        sftp_client = get_sftp_client(sftp_remote_dir)
+        sftp_client.get(file_name, f"{sftp_local_dir}/{file_name}", callback=write_log(process_name="pull_sftp_client_file",
+                                                                                       doc_name=file_name,
+                                                                                       process_status=Status.INPROGRESS.value,
+                                                                                       annotation="File pulling from SFTP",
+                                                                                       create_by="Schedule RPA"))
+
+        write_log(process_name="pull_sftp_client_file",
+                  doc_name=file_name,
+                  process_status=Status.SUCCESS.value,
+                  annotation="File pulled from SFTP",
+                  create_by="Schedule RPA")
     except Exception as e:
         print(f"Error pull_file: {e}")
-        db_conn.rollback()
+
+        write_log(process_name="pull_sftp_client_file",
+                  doc_name=file_name,
+                  process_status=Status.FAILED.value,
+                  annotation="Error pulling file from SFTP",
+                  create_by="Schedule RPA")
         
     sftp_client.close()
 
-def enqueue_file(file, db_conn):
+def enqueue_file(file):
     """Enqueue file to RabbitMQ"""
-    publish_message_to_exchange(exchange_name="documents",
-                                exchange_type="topic",
-                                routing_key=f"documents.{file['bank_code']}.{file['service_code']}",
-                                message=json.dumps({"file": file}))
-    
+
     try:
-        cursor = db_conn.cursor()
-        # TODO: Implement SEQUENCE in Oracle DB
-        result = cursor.execute("SELECT COUNT(*) FROM PROCESS_HISTORY")
-        seq_process = result.fetchone()[0] + 1
-        cursor.execute("INSERT INTO PROCESS_HISTORY (SEQ_PROCESS, DOC_NAME, PROCESS_STATUS, CREATED_BY, CREATED_DATE) VALUES (:seq_process, :doc_name, '0', 'Schedule RPA', CURRENT_TIMESTAMP)", {
-            "seq_process": seq_process,
-            "doc_name": file["doc_name"],
-        })
-        db_conn.commit()
+        publish_message_to_exchange(exchange_name="documents",
+                                    exchange_type="topic",
+                                    routing_key=f"documents.{file['bank_code']}.{file['service_code']}",
+                                    message=json.dumps({"file": file}))
+    
+        write_log(process_name="enqueue_file",
+                  doc_name=file["doc_name"],
+                  process_status=Status.SUCCESS.value,
+                  annotation="File enqueued",
+                  create_by="Schedule RPA")
     except Exception as e:
         print(f"Error enqueue_file: {e}")
-        db_conn.rollback()
+
+        write_log(process_name="enqueue_file",
+                  doc_name=file["doc_name"],
+                  process_status=Status.FAILED.value,
+                  annotation="Error enqueuing file",
+                  create_by="Schedule RPA")
+
 
 @task
 def main():
@@ -73,7 +86,7 @@ def main():
     sftp_files = sftp_client.listdir()
 
     if not sftp_files:
-        print("No files to process")
+        print("[!] No files to process")
         sftp_client.close()
         return
 
@@ -83,8 +96,11 @@ def main():
     for file_name in sftp_files:
         if file_name.endswith(".txt"):
             cursor = db_conn.cursor()
-            result = cursor.execute("SELECT COUNT(*) FROM DOCUMENTS_INFO WHERE DOC_NAME = :doc_name", {"doc_name": file_name})
-            isProcessed = result.fetchone()[0] > 0
+            result = cursor.execute("""
+                                        SELECT CASE WHEN EXISTS (SELECT 1 FROM DOCUMENTS_INFO WHERE DOC_NAME = :doc_name) THEN 1 ELSE 0 END
+                                        FROM dual
+                                    """, {"doc_name": file_name}) 
+            isProcessed = result.fetchone()[0] == 1
 
             if not isProcessed:
 
@@ -97,12 +113,12 @@ def main():
                     "doc_name": file_name
                 }
 
-                pull_file(file_name, db_conn)
-                enqueue_file(file, db_conn)
-                print(f"Enqueued file {file_name}")
+                pull_file(file_name)
+                enqueue_file(file)
+                print(f"[o] Enqueued file {file_name}")
 
             else:
-                print(f"File {file_name} already processed")
+                print(f"[!] File {file_name} already processed")
 
     db_conn.close()
     sftp_client.close()

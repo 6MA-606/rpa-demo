@@ -15,10 +15,10 @@ def get_rabbitmq_connection():
 
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host, port=rabbitmq_port))
-        print("Connected to RabbitMQ")
+        print("[x] RabbitMQ connection established!")
         return connection
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[x] RabbitMQ connection error: {e}")
         return None
 
 def get_rabbitmq_channel():
@@ -32,10 +32,10 @@ def get_rabbitmq_channel():
     try:
         connection = get_rabbitmq_connection()
         channel = connection.channel()
-        print("Channel created")
+        print("[x] RabbitMQ channel established!")
         return channel
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[x] RabbitMQ channel error: {e}")
         return None
     
 def close_rabbitmq_connection():
@@ -49,27 +49,35 @@ def close_rabbitmq_connection():
 
 def set_rabbitmq_queue(queue_name):
     channel = get_rabbitmq_channel()
-    channel.queue_declare(queue=queue_name)
-    print(f"Queue {queue_name} declared")
+    channel.queue_declare(queue=queue_name, durable=True)
 
 def set_rabbitmq_exchange(exchange_name, exchange_type):
     channel = get_rabbitmq_channel()
-    channel.exchange_declare(exchange=exchange_name, exchange_type=exchange_type)
-    print(f"Exchange {exchange_name} declared")
+    channel.exchange_declare(exchange=exchange_name, exchange_type=exchange_type, durable=True)
 
 def publish_message(queue_name, message):
     channel = get_rabbitmq_channel()
-    channel.basic_publish(exchange="", routing_key=queue_name, body=message)
-    print(f"Message published to {queue_name}")
+    channel.basic_publish(exchange="",
+                          routing_key=queue_name,
+                          body=message,
+                          properties=pika.BasicProperties(
+                              delivery_mode=pika.DeliveryMode.Persistent
+                         ))
 
 def publish_message_to_exchange(exchange_name, exchange_type, routing_key, message):
     channel = get_rabbitmq_channel()
 
-    channel.exchange_declare(exchange=exchange_name, exchange_type=exchange_type)
+    channel.exchange_declare(exchange=exchange_name,
+                             exchange_type=exchange_type,
+                             durable=True)
 
-    channel.basic_publish(exchange=exchange_name, routing_key=routing_key, body=message)
-    print(f"Message published to {exchange_name}")
-
+    channel.basic_publish(exchange=exchange_name,
+                          routing_key=routing_key,
+                          body=message,
+                          properties=pika.BasicProperties(
+                              delivery_mode=pika.DeliveryMode.Persistent
+                          ))
+    
 def consume_message(queue_name, callback):
     channel = get_rabbitmq_channel()
     channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)

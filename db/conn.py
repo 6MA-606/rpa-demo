@@ -10,6 +10,7 @@ db_datasource = env["DB_DATASOURCE"]
 def get_db_connection():
 
     global conn
+
     if conn:
         return conn
 
@@ -17,15 +18,15 @@ def get_db_connection():
         conn = oracledb.connect(user=db_user,
                                 password=db_pass,
                                 dsn=db_datasource)
-        print("✅ Database connection established!")
+        print("[x] Database connection established!")
         return conn
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[x] Database connection error: {e}")
         return None
 
 def close_connection(conn):
     if conn:
         conn.close()
-        print("✅ Connection closed!")
+        print("[x] Database connection closed!")
     else:
-        print("❌ No connection to close!")
+        print("[x] No database connection to close!")

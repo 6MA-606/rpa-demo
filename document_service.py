@@ -1,13 +1,9 @@
 import pika
 import json
-import os
-import paramiko
 from load_dotenv import env
-from robocorp.tasks import task
-from sftp.conn import get_sftp_client
-from rabbitmq.conn import publish_message_to_exchange
-from db.conn import get_db_connection 
-from datetime import datetime
+from libs.logManagement import write_log
+from libs.status import Status
+from db.conn import get_db_connection
 
 rabbitmq_host = env["RABBITMQ_HOST"]
 rabbitmq_port = env["RABBITMQ_PORT"]
@@ -18,14 +14,16 @@ connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_hos
 
 channel = connection.channel()
 
-channel.exchange_declare(exchange="documents", exchange_type="topic")
+channel.exchange_declare(exchange="documents", exchange_type="topic", durable=True)
 
-result = channel.queue_declare(queue='', exclusive=True)
+result = channel.queue_declare(queue='', exclusive=True, durable=True)
 quene_name = result.method.queue
 
 channel.queue_bind(exchange="documents", queue=quene_name, routing_key="documents.#")
 
-def save_to_db(file, db_conn):
+def save_to_db(file):
+
+    db_conn = get_db_connection()
     cursor = db_conn.cursor()
 
     file_content = None
@@ -35,39 +33,45 @@ def save_to_db(file, db_conn):
         file_content = f.read()
 
     try:
-        cursor.execute("SELECT COUNT(*) FROM DOCUMENTS_INFO")
-        seq = cursor.fetchone()[0] + 1
-        cursor.execute("INSERT INTO DOCUMENTS_INFO (SEQ, BANK_CODE, SERVICE_CODE, DOC_NAME, CONTENT, CREATED_DATE, UPDATED_DATE) VALUES (:seq, :bank_code, :service_code, :doc_name, :content, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", {
-            "seq": seq,
+        write_log(process_name="save_file_content_to_db",
+                  doc_name=file["doc_name"],
+                  process_status=Status.INPROGRESS.value,
+                  annotation="Saving file content to database",
+                  create_by="File Content Extractor Service")
+        
+        cursor.execute("INSERT INTO DOCUMENTS_INFO (BANK_CODE, SERVICE_CODE, DOC_NAME, CONTENT, CREATED_DATE, UPDATED_DATE) VALUES (:bank_code, :service_code, :doc_name, :content, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", {
             "bank_code": file["bank_code"],
             "service_code": file["service_code"],
             "doc_name": file["doc_name"],
             "content": file_content
         })
         db_conn.commit()
+        write_log(process_name="save_file_content_to_db",
+                  doc_name=file["doc_name"],
+                  process_status=Status.SUCCESS.value,
+                  annotation="File content saved to database",
+                  create_by="File Content Extractor Service")
     except Exception as e:
         print(f"Error save_to_db: {e}")
         db_conn.rollback()
+        write_log(process_name="save_file_content_to_db",
+                  doc_name=file["doc_name"],
+                  process_status=Status.FAILED.value,
+                  annotation="Error saving file content to database",
+                  create_by="File Content Extractor Service")
 
 
 def callback(ch, method, properties, body):
-    print(f" [x] Received {body}")
+    print(f" [x] Received message: {json.loads(body)['file']['doc_name']}")
 
-    file = json.loads(body)
-    db_conn = get_db_connection()
+    file = json.loads(body)["file"]
 
-    save_to_db(file, db_conn)
+    save_to_db(file)
 
-    cursor = db_conn.cursor()
-    # TODO: Implement SEQUENCE in Oracle DB
-    result = cursor.execute("SELECT COUNT(*) FROM PROCESS_HISTORY")
-    seq_process = result.fetchone()[0] + 1
-    cursor.execute("INSERT INTO PROCESS_HISTORY (SEQ_PROCESS, DOC_NAME, PROCESS_STATUS, CREATED_BY, CREATED_DATE) VALUES (:seq_process, :doc_name, '2', 'Schedule RPA', CURRENT_TIMESTAMP)", {
-        "seq_process": seq_process,
-        "doc_name": file["doc_name"],
-    })
+    ch.basic_qos(prefetch_count=1)
+    ch.basic_ack(delivery_tag=method.delivery_tag)
 
-channel.basic_consume(queue=quene_name, on_message_callback=callback, auto_ack=True)
+channel.basic_consume(queue=quene_name, on_message_callback=callback)
 
 print(" [*] Waiting for messages. To exit press CTRL+C")
 
